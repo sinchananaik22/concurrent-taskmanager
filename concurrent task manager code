@@ -1,0 +1,118 @@
+package main 
+ 
+import ( 
+ "fmt" 
+ "os" 
+ "os/signal" 
+ "sync" 
+ "syscall" 
+ "time" 
+) 
+ 
+type Task struct { 
+ ID       int 
+ TaskData string 
+} 
+ 
+type TaskManager struct { 
+ MaxWorkers int 
+ TaskQueue  chan Task 
+ WG         sync.WaitGroup 
+ quit       chan struct{} // Channel for signaling shutdown 
+} 
+ 
+func NewTaskManager(maxWorkers int, maxQueueSize int) *TaskManager { 
+ return &TaskManager{ 
+  MaxWorkers: maxWorkers, 
+  TaskQueue:  make(chan Task, maxQueueSize), 
+  quit:       make(chan struct{}), 
+ } 
+} 
+ 
+func (tm *TaskManager) AddTask(task Task) bool { 
+ select { 
+ case tm.TaskQueue <- task: 
+  return true 
+ default: 
+  return false 
+ } 
+} 
+ 
+func (tm *TaskManager) StartProcessing() { 
+ for i := 0; i < tm.MaxWorkers; i++ { 
+  go tm.worker() 
+ } 
+} 
+ 
+func (tm *TaskManager) worker() { 
+ for { 
+  select { 
+  case task, ok := <-tm.TaskQueue: 
+   if !ok { 
+    // Task queue closed, exit goroutine 
+    return 
+   } 
+   tm.ProcessTask(task) 
+  case <-tm.quit: 
+   // Received shutdown signal, exit goroutine 
+   return 
+  } 
+ } 
+} 
+ 
+func (tm *TaskManager) ProcessTask(task Task) { 
+ fmt.Printf("Processing task %d with data: %s\n", task.ID, task.TaskData) 
+ time.Sleep(time.Second) // Simulating task processing time 
+ fmt.Printf("Task %d completed\n", task.ID) 
+ tm.WG.Done() 
+} 
+ 
+func (tm *TaskManager) WaitForCompletion() { 
+ tm.WG.Wait() 
+ close(tm.quit)     // Signal all workers to stop 
+ close(tm.TaskQueue) 
+} 
+ 
+func main() { 
+ var maxWorkers, maxQueueSize int 
+ fmt.Print("Enter the maximum number of workers: ") 
+ fmt.Scan(&maxWorkers) 
+ fmt.Print("Enter the maximum size of the task queue: ") 
+ fmt.Scan(&maxQueueSize) 
+ 
+ taskManager := NewTaskManager(maxWorkers, maxQueueSize) 
+ 
+ // Start signal handler to gracefully shutdown the program on interrupt 
+signals 
+ signalChan := make(chan os.Signal, 1) 
+ signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM) 
+ go func() { 
+  <-signalChan 
+  fmt.Println("\nReceived interrupt signal. Shutting down...") 
+  taskManager.WaitForCompletion() 
+  os.Exit(0) 
+ }() 
+ 
+ taskManager.StartProcessing() 
+ 
+ // Add tasks to the queue 
+ for i := 1; i <= 10; i++ { 
+  task := Task{ 
+   ID:       i, 
+   TaskData: fmt.Sprintf("Task %d data", i), 
+  } 
+  added := taskManager.AddTask(task) 
+  if !added { 
+   fmt.Printf("Task %d could not be added. Task queue is 
+full.\n", i) 
+   break // Break out of loop if queue is full 
+  } 
+  taskManager.WG.Add(1) // Increment WaitGroup counter for 
+each task added 
+ } 
+ 
+ // Wait for all tasks to complete 
+ taskManager.WaitForCompletion() 
+ 
+ fmt.Println("All tasks completed!")
+}
